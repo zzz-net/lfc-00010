@@ -39,7 +39,8 @@ def export_handover():
     writer.writerow([
         '样本编号', '批次号', '样本类型', '当前状态', 
         '入库时间', '打包时间', '交接时间', '到达时间',
-        '最新温度', '异常状态', '复核人', '复核时间', '复核备注'
+        '最新温度', '异常状态', '证据数量', '照片证据', '文字证据',
+        '复核人', '复核时间', '复核备注'
     ])
     
     for s in samples:
@@ -55,6 +56,14 @@ def export_handover():
             if log['temperature'] is not None:
                 latest_temp = log['temperature']
         
+        evidences = conn.execute(
+            'SELECT type, description, file_path FROM evidences WHERE sample_id = ? ORDER BY id ASC',
+            (s['id'],)
+        ).fetchall()
+        
+        photo_files = '; '.join([e['file_path'] for e in evidences if e['file_path']])
+        text_descs = '; '.join([e['description'] for e in evidences if e['description']])
+        
         is_frozen = s['current_status'] in ['FROZEN', 'REVIEW_CLOSED']
         
         writer.writerow([
@@ -68,6 +77,9 @@ def export_handover():
             log_map.get('ARRIVED', ''),
             latest_temp if latest_temp is not None else '',
             '是' if is_frozen else '否',
+            len(evidences),
+            photo_files,
+            text_descs,
             s['reviewed_by'] or '',
             s['reviewed_at'] or '',
             s['review_remark'] or ''

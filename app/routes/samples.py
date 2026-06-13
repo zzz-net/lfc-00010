@@ -247,7 +247,7 @@ def record_exception(sample_id):
         conn.close()
         return jsonify({'error': '样本不存在'}), 404
     
-    if row['current_status'] == 'ARRIVED' or row['current_status'] == 'REVIEW_CLOSED':
+    if row['current_status'] in ['REVIEW_CLOSED', 'FROZEN', 'PENDING']:
         conn.close()
         return jsonify({'error': '当前状态不允许录入异常'}), 400
     

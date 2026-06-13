@@ -101,10 +101,22 @@ def status_to_text(status_code):
     return STATUS_MAP.get(status_code, status_code)
 
 def can_transition(from_status, to_status):
-    if from_status == 'FROZEN' and to_status == 'REVIEW_CLOSED':
-        return True
-    if from_status in ['FROZEN', 'REVIEW_CLOSED', 'ARRIVED'] and to_status != 'FROZEN':
+    if from_status == to_status:
         return False
+    
+    if from_status == 'FROZEN':
+        return to_status == 'REVIEW_CLOSED'
+    
+    if from_status == 'REVIEW_CLOSED':
+        return False
+    
+    if to_status == 'FROZEN':
+        return from_status in ['WAREHOUSED', 'PACKED', 'HANDED_OVER', 'ARRIVED']
+    
+    if from_status == 'ARRIVED':
+        return False
+    
     if from_status in STATUS_ORDER and to_status in STATUS_ORDER:
         return STATUS_ORDER.index(to_status) == STATUS_ORDER.index(from_status) + 1
-    return to_status == 'FROZEN' and from_status in ['WAREHOUSED', 'PACKED', 'HANDED_OVER']
+    
+    return False
