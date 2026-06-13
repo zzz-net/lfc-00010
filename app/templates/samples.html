@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>样本列表 - 实验室样本转运台账</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <span style="font-size: 24px;">🧪</span>
+      <span>实验室样本转运台账</span>
+    </div>
+    <div class="navbar-user">
+      <span id="userInfo"></span>
+      <span class="role-badge" id="userRole"></span>
+      <button class="btn btn-sm" onclick="logout()" style="background: rgba(255,255,255,0.2); color: white;">
+        退出
+      </button>
+    </div>
+  </nav>
+  
+  <div class="container">
+    <div class="page-header">
+      <h1 class="page-title">样本台账</h1>
+      <div class="page-actions">
+        <button class="btn btn-accent" onclick="openImportModal()">
+          📥 批次导入
+        </button>
+        <button class="btn btn-success" onclick="exportHandover()">
+          📄 导出交接单
+        </button>
+      </div>
+    </div>
+    
+    <div class="filter-bar">
+      <input type="text" id="searchInput" placeholder="搜索 sample_id / 批次号..." style="flex: 1; min-width: 200px;">
+      <select id="statusFilter">
+        <option value="">全部状态</option>
+        <option value="PENDING">待入库</option>
+        <option value="WAREHOUSED">已入库</option>
+        <option value="PACKED">已打包</option>
+        <option value="HANDED_OVER">已交接</option>
+        <option value="ARRIVED">已到达</option>
+        <option value="FROZEN">异常冻结</option>
+        <option value="REVIEW_CLOSED">已复核关闭</option>
+      </select>
+      <button class="btn btn-primary" onclick="loadSamples()">🔍 查询</button>
+      <button class="btn" onclick="resetFilters()">🔄 重置</button>
+    </div>
+    
+    <div class="card" style="padding: 0; overflow: hidden;">
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>样本编号</th>
+              <th>批次号</th>
+              <th>样本类型</th>
+              <th>当前状态</th>
+              <th>创建时间</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="samplesTableBody">
+            <tr><td colspan="7" style="text-align: center; padding: 40px; color: var(--gray-400);">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    
+    <div class="pagination" id="pagination"></div>
+  </div>
+  
+  <div class="modal-overlay" id="importModal">
+    <div class="modal" style="max-width: 700px;">
+      <div class="modal-header">
+        <h3 class="modal-title">批次导入样本</h3>
+        <button class="modal-close" onclick="closeImportModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">批次号 *</label>
+          <input type="text" id="importBatchNo" class="form-input" placeholder="例如：BATCH-20240601-001">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">样本数据 (JSON 格式)</label>
+          <textarea id="importData" class="form-textarea" rows="8" placeholder='[
+  {"sample_id": "S001", "sample_type": "血液"},
+  {"sample_id": "S002", "sample_type": "唾液"}
+]'></textarea>
+        </div>
+        
+        <div style="margin-bottom: 12px;">
+          <button class="btn btn-sm" onclick="loadSampleData()" style="margin-right: 8px;">📋 加载示例数据</button>
+          <span style="font-size: 12px; color: var(--gray-500);">支持 sample_id 和 sample_type 字段</span>
+        </div>
+        
+        <div id="importPreview"></div>
+        <div id="importResult"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeImportModal()">取消</button>
+        <button class="btn btn-primary" onclick="previewImport()">预览</button>
+        <button class="btn btn-accent" onclick="confirmImport()">确认导入</button>
+      </div>
+    </div>
+  </div>
+  
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/samples.js') }}"></script>
+</body>
+</html>

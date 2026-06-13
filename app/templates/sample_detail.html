@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>样本详情 - 实验室样本转运台账</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <span style="font-size: 24px;">🧪</span>
+      <span>实验室样本转运台账</span>
+    </div>
+    <div class="navbar-user">
+      <span id="userInfo"></span>
+      <span class="role-badge" id="userRole"></span>
+      <button class="btn btn-sm" onclick="logout()" style="background: rgba(255,255,255,0.2); color: white;">
+        退出
+      </button>
+    </div>
+  </nav>
+  
+  <div class="container">
+    <a href="/samples" class="back-link">← 返回列表</a>
+    
+    <div class="page-header">
+      <h1 class="page-title">样本详情</h1>
+      <span id="statusBadge" class="status-badge" style="font-size: 14px; padding: 6px 14px;"></span>
+    </div>
+    
+    <div class="action-bar" id="actionBar">
+    </div>
+    
+    <div class="card" style="margin-bottom: 24px;">
+      <h3 class="section-title">基本信息</h3>
+      <div class="detail-grid" id="sampleInfo">
+        <div class="detail-item">
+          <span class="detail-label">样本编号</span>
+          <span class="detail-value" id="infoSampleId">-</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">批次号</span>
+          <span class="detail-value" id="infoBatchNo">-</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">样本类型</span>
+          <span class="detail-value" id="infoSampleType">-</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">当前状态</span>
+          <span class="detail-value" id="infoStatus">-</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">创建时间</span>
+          <span class="detail-value" id="infoCreatedAt">-</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">更新时间</span>
+          <span class="detail-value" id="infoUpdatedAt">-</span>
+        </div>
+      </div>
+      
+      <div id="reviewInfo" style="display: none; padding-top: 16px; border-top: 1px solid var(--gray-200);">
+        <h4 style="margin-bottom: 12px; color: var(--gray-700);">复核信息</h4>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="detail-label">复核人</span>
+            <span class="detail-value" id="infoReviewedBy">-</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">复核时间</span>
+            <span class="detail-value" id="infoReviewedAt">-</span>
+          </div>
+          <div class="detail-item" style="grid-column: span 2;">
+            <span class="detail-label">复核备注</span>
+            <span class="detail-value" id="infoReviewRemark">-</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="card" style="margin-bottom: 24px;">
+      <h3 class="section-title">状态时间线</h3>
+      <div class="timeline" id="timeline">
+      </div>
+    </div>
+    
+    <div class="card">
+      <h3 class="section-title">证据记录</h3>
+      <div class="evidence-list" id="evidenceList">
+        <p style="color: var(--gray-500); text-align: center; padding: 20px;">暂无证据记录</p>
+      </div>
+    </div>
+  </div>
+  
+  <div class="modal-overlay" id="statusModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title" id="statusModalTitle">状态变更</h3>
+        <button class="modal-close" onclick="closeStatusModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="statusAction">
+        <div class="form-group">
+          <label class="form-label">备注</label>
+          <textarea id="statusRemark" class="form-textarea" placeholder="可选：输入备注信息"></textarea>
+        </div>
+        <div class="form-group" id="tempGroup" style="display: none;">
+          <label class="form-label">温度 (°C)</label>
+          <input type="number" step="0.1" id="statusTemp" class="form-input" placeholder="记录当前温度">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeStatusModal()">取消</button>
+        <button class="btn btn-primary" onclick="confirmStatusChange()">确认</button>
+      </div>
+    </div>
+  </div>
+  
+  <div class="modal-overlay" id="exceptionModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">录入异常</h3>
+        <button class="modal-close" onclick="closeExceptionModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">异常类型</label>
+          <select id="exceptionType" class="form-select">
+            <option value="overtemp">超温异常</option>
+            <option value="damage">破损异常</option>
+            <option value="other">其他异常</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">温度 (°C)</label>
+          <input type="number" step="0.1" id="exceptionTemp" class="form-input" placeholder="如有超温请填写">
+        </div>
+        <div class="form-group">
+          <label class="form-label">异常描述</label>
+          <textarea id="exceptionDesc" class="form-textarea" placeholder="请详细描述异常情况"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">证据照片路径 (可选)</label>
+          <input type="text" id="exceptionEvidence" class="form-input" placeholder="输入照片文件路径或描述">
+        </div>
+        <p style="font-size: 12px; color: var(--danger);">
+          ⚠️ 提交后样本将被置为"异常冻结"状态，普通操作员无法关闭，需管理员复核
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeExceptionModal()">取消</button>
+        <button class="btn btn-danger" onclick="submitException()">提交异常</button>
+      </div>
+    </div>
+  </div>
+  
+  <div class="modal-overlay" id="reviewModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">复核异常</h3>
+        <button class="modal-close" onclick="closeReviewModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">复核操作</label>
+          <select id="reviewAction" class="form-select">
+            <option value="close">复核关闭</option>
+            <option value="keep_frozen">维持冻结</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">复核备注 *</label>
+          <textarea id="reviewRemark" class="form-textarea" placeholder="请填写复核意见"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeReviewModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitReview()">提交复核</button>
+      </div>
+    </div>
+  </div>
+  
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script>
+    const SAMPLE_ID = {{ sample_id }};
+  </script>
+  <script src="{{ url_for('static', filename='js/sample_detail.js') }}"></script>
+</body>
+</html>
