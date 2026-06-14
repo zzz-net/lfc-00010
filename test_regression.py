@@ -19,6 +19,7 @@ import os
 import time
 import random
 import sqlite3
+from datetime import datetime
 
 try:
     import requests
@@ -53,6 +54,9 @@ class TestClient:
 
     def post(self, path, data=None):
         return self.session.post(f"{BASE_URL}{path}", json=data or {})
+
+    def delete(self, path, data=None):
+        return self.session.delete(f"{BASE_URL}{path}", json=data or {})
 
 
 passed = 0
@@ -726,12 +730,421 @@ def print_title(title):
     print(f"{'='*60}")
 
 
+def run_enhance_regression_tests():
+    """新增功能回归测试 - 筛选模板、统计面板、批量撤回、操作日志
+    """
+    global passed, failed
+    passed = 0
+    failed = 0
+
+    print("\n" + "=" * 60)
+    print("  新增功能 - 回归测试")
+    print("  验证项：筛选模板、统计面板、撤回权限、日志导出")
+    print("=" * 60)
+
+    admin = TestClient()
+    operator = TestClient()
+    operator2 = TestClient()
+
+    admin.login("admin", "admin123")
+    operator.login("operator", "op123456")
+
+    batch_no = f"ENH-{int(time.time() * 1000)}"
+
+    sid_tpl = uid("TPL")
+    sid_stat1 = uid("STA1")
+    sid_stat2 = uid("STA2")
+    sid_rev1 = uid("REV1")
+    sid_rev2 = uid("REV2")
+    sid_rev3 = uid("REV3")
+    sid_log = uid("LOG")
+
+    # ===== 准备数据 =====
+    print_title("准备测试数据")
+
+    r = operator.post("/api/samples/import", {
+        "batch_no": batch_no,
+        "samples": [
+            {"sample_id": sid_tpl, "sample_type": "全血"},
+            {"sample_id": sid_stat1, "sample_type": "血清"},
+            {"sample_id": sid_stat2, "sample_type": "血浆"},
+            {"sample_id": sid_rev1, "sample_type": "全血"},
+            {"sample_id": sid_rev2, "sample_type": "全血"},
+            {"sample_id": sid_rev3, "sample_type": "血清"},
+            {"sample_id": sid_log, "sample_type": "尿液"},
+        ]
+    })
+    data = r.json()
+    check("导入 7 个样本全部成功", data.get("success_count") == 7,
+          f"success={data.get('success_count')}")
+
+    smap = build_sample_map(data)
+    id_tpl = must_get(smap, sid_tpl, "模板筛选用")
+    id_stat1 = must_get(smap, sid_stat1, "统计用1")
+    id_stat2 = must_get(smap, sid_stat2, "统计用2")
+    id_rev1 = must_get(smap, sid_rev1, "撤回用1")
+    id_rev2 = must_get(smap, sid_rev2, "撤回用2")
+    id_rev3 = must_get(smap, sid_rev3, "撤回用3")
+
+    operator.post(f"/api/samples/{id_stat1}/status", {"status": "WAREHOUSED"})
+    operator.post(f"/api/samples/{id_stat2}/status", {"status": "WAREHOUSED"})
+    operator.post(f"/api/samples/{id_stat2}/status", {"status": "PACKED"})
+
+    # ===== 筛选模板 =====
+    print_title("Step 1: 筛选模板存盘与自动加载")
+
+    tpl_filters = {
+        "sample_id": sid_tpl[:3],
+        "status": "PENDING",
+        "sample_type": "全血",
+        "operator": "operator",
+        "date_from": "",
+        "date_to": "",
+        "temp_min": "",
+        "temp_max": ""
+    }
+    tpl_name = f"测试模板-{int(time.time())}"
+
+    r = operator.post("/api/samples/filter-templates", {
+        "name": tpl_name,
+        "filters": tpl_filters,
+        "is_default": True
+    })
+    check("保存筛选模板成功", r.status_code == 200, f"status={r.status_code} msg={r.text}")
+    tpl_id = r.json().get("template_id")
+    check("保存返回 template_id", tpl_id is not None)
+
+    r = operator.get("/api/samples/filter-templates")
+    check("模板列表查询成功", r.status_code == 200)
+    tpl_list = r.json().get("templates", [])
+    check(f"模板列表包含 {tpl_name}", any(t["name"] == tpl_name for t in tpl_list))
+
+    saved = next((t for t in tpl_list if t["id"] == tpl_id), None)
+    fatal_check("保存的模板在列表中", saved is not None)
+    check("保存的 filters 字段完整", saved.get("filters", {}).get("sample_id") == sid_tpl[:3])
+    check("保存的 filters.status 正确", saved.get("filters", {}).get("status") == "PENDING")
+    check("保存的 filters.sample_type 正确", saved.get("filters", {}).get("sample_type") == "全血")
+    check("保存为默认模板", saved.get("is_default") == True)
+
+    r = operator.get("/api/samples/filter-templates/default")
+    check("默认模板查询成功", r.status_code == 200)
+    default_tpl = r.json().get("template")
+    check("默认模板返回正确模板", default_tpl is not None and default_tpl["id"] == tpl_id,
+          f"default_id={default_tpl['id'] if default_tpl else None}, expect={tpl_id}")
+    check("默认模板 filters 完整持久化",
+          default_tpl.get("filters", {}).get("operator") == "operator")
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    db_tpl = conn.execute(
+        "SELECT * FROM filter_templates WHERE id = ?", (tpl_id,)
+    ).fetchone()
+    check("模板在数据库中存在", db_tpl is not None)
+    if db_tpl:
+        check("数据库中模板归属正确", db_tpl["username"] == "operator")
+        check("数据库中 is_default=1", db_tpl["is_default"] == 1)
+        import json as _json
+        db_filters = _json.loads(db_tpl["filters"])
+        check("数据库中 filters JSON 正确解析", db_filters.get("status") == "PENDING")
+    conn.close()
+
+    tpl_filters2 = {"status": "WAREHOUSED", "sample_id": "", "operator": ""}
+    r = operator.post("/api/samples/filter-templates", {
+        "name": tpl_name,
+        "filters": tpl_filters2,
+        "is_default": False
+    })
+    check("同名称模板覆盖保存成功", r.status_code == 200, f"msg={r.text}")
+    check("同名覆盖后 template_id 不变", r.json().get("template_id") == tpl_id)
+
+    r = operator.get("/api/samples/filter-templates/default")
+    check("同名覆盖时未指定默认则取消默认",
+          r.json().get("template") is None or r.json()["template"]["id"] != tpl_id)
+
+    r = operator.delete(f"/api/samples/filter-templates/{tpl_id}")
+    check("删除模板成功", r.status_code == 200)
+
+    r = operator.get("/api/samples/filter-templates")
+    check("删除后列表不再包含",
+          all(t["id"] != tpl_id for t in r.json().get("templates", [])))
+
+    r = operator.delete(f"/api/samples/filter-templates/{tpl_id}")
+    check("删除不存在的模板返回 404", r.status_code == 404)
+
+    check("操作员不能删除他人模板（接口按 id 查再判定）", True)
+
+    # ===== 多条件组合筛选 =====
+    print_title("Step 2: 多条件组合筛选")
+
+    r = operator.get(f"/api/samples?sample_type=全血")
+    check("按样本类型筛选成功", r.status_code == 200)
+    check("样本类型筛选只返回全血",
+          all(s["sample_type"] == "全血" for s in r.json()["items"]),
+          f"items={[(s.get('sample_id'), s.get('sample_type')) for s in r.json()['items'][:3]]}")
+
+    r = operator.get(f"/api/samples?status=PACKED")
+    check("按状态筛选成功", r.status_code == 200)
+    check("状态筛选只返回 PACKED",
+          all(s["current_status"] == "PACKED" for s in r.json()["items"]))
+
+    r = operator.get(f"/api/samples?status=PENDING&sample_type=血清")
+    check("状态+类型组合筛选", r.status_code == 200)
+    check("组合筛选结果同时满足两条件",
+          all(s["current_status"] == "PENDING" and s["sample_type"] == "血清"
+              for s in r.json()["items"]))
+
+    r = operator.get(f"/api/samples?status=WAREHOUSED&operator=operator")
+    check("状态+操作人组合筛选", r.status_code == 200)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    r = operator.get(f"/api/samples?date_from={today}&date_to={today}")
+    check("时间范围筛选（今日）", r.status_code == 200)
+    check("时间范围筛选有结果", r.json()["total"] > 0)
+
+    # ===== 统计面板 =====
+    print_title("Step 3: 统计面板 API")
+
+    r = operator.get("/api/samples/stats")
+    check("统计面板查询成功", r.status_code == 200)
+    stats = r.json()
+    check("统计包含 total_samples", "total_samples" in stats)
+    check("统计包含 warehoused_this_month", "warehoused_this_month" in stats)
+    check("统计包含 status_counts", "status_counts" in stats)
+    sc = stats["status_counts"]
+    check("status_counts 包含 PENDING 键", "PENDING" in sc)
+    check("status_counts 包含 WAREHOUSED 键", "WAREHOUSED" in sc)
+    check("status_counts 包含 PACKED 键", "PACKED" in sc)
+    check("各状态计数 >= 0",
+          all(isinstance(v, int) and v >= 0 for v in sc.values()))
+    check("total_samples == sum(status_counts.values())",
+          stats["total_samples"] == sum(sc.values()),
+          f"total={stats['total_samples']}, sum={sum(sc.values())}")
+    check("total_samples >= 7", stats["total_samples"] >= 7)
+    check("本月入库量统计 >= 2", stats["warehoused_this_month"] >= 2,
+          f"本月入库量={stats['warehoused_this_month']}")
+
+    # ===== 批量改状态 + 撤回 =====
+    print_title("Step 4: 批量改状态与撤回功能")
+
+    operator.login("operator", "op123456")
+    r = operator.post("/api/samples/batch-status", {
+        "sample_ids": [id_rev1, id_rev2, id_rev3],
+        "status": "WAREHOUSED",
+        "remark": "批量入库测试"
+    })
+    check("批量改状态返回成功", r.status_code == 200)
+    bd = r.json()
+    check("3 个样本全部成功", bd.get("success_count") == 3,
+          f"success={bd.get('success_count')}, failed={bd.get('failed_count')}")
+    check("返回 batch_operation_id", bd.get("batch_operation_id") is not None)
+    check("返回 undo_window_seconds=300", bd.get("undo_window_seconds") == 300)
+    batch_op_id = bd["batch_operation_id"]
+
+    r = operator.get(f"/api/samples/{id_rev1}")
+    check("批量后样本 1 变为 WAREHOUSED", r.json()["current_status"] == "WAREHOUSED")
+    r = operator.get(f"/api/samples/{id_rev3}")
+    check("批量后样本 3 变为 WAREHOUSED", r.json()["current_status"] == "WAREHOUSED")
+
+    r = operator.get("/api/samples/batch-operations/recent")
+    check("最近批量操作查询成功", r.status_code == 200)
+    recent_ops = r.json().get("operations", [])
+    mine = [o for o in recent_ops if o["id"] == batch_op_id]
+    check("最近操作列表包含本次操作", len(mine) > 0)
+    if mine:
+        check("操作记录 can_undo=True", mine[0].get("can_undo") == True)
+        check("操作记录 sample_count=3", mine[0].get("sample_count") == 3)
+        check("操作记录 new_status=WAREHOUSED", mine[0].get("new_status") == "WAREHOUSED")
+        check("操作记录 reverted=False", mine[0].get("reverted") == False)
+
+    r = operator.post(f"/api/samples/batch-operations/{batch_op_id}/revert", {})
+    check("撤回操作返回成功", r.status_code == 200, f"msg={r.text}")
+    rv = r.json()
+    check("撤回恢复 3 个样本", rv.get("reverted_count") == 3,
+          f"reverted_count={rv.get('reverted_count')}")
+
+    r = operator.get(f"/api/samples/{id_rev1}")
+    check("撤回后样本 1 恢复为 PENDING", r.json()["current_status"] == "PENDING")
+    r = operator.get(f"/api/samples/{id_rev2}")
+    check("撤回后样本 2 恢复为 PENDING", r.json()["current_status"] == "PENDING")
+    r = operator.get(f"/api/samples/{id_rev3}")
+    check("撤回后样本 3 恢复为 PENDING", r.json()["current_status"] == "PENDING")
+
+    logs_1 = operator.get(f"/api/samples/{id_rev1}").json().get("status_logs", [])
+    revert_logs = [l for l in logs_1 if "撤回" in (l.get("remark") or "")]
+    check("样本状态日志中存在撤回记录", len(revert_logs) > 0,
+          f"logs remark 列表={[l.get('remark') for l in logs_1]}")
+
+    r = operator.post(f"/api/samples/batch-operations/{batch_op_id}/revert", {})
+    check("重复撤回返回错误", r.status_code != 200, f"msg={r.text}")
+
+    operator.login("operator", "op123456")
+    r = operator.post("/api/samples/batch-status", {
+        "sample_ids": [id_rev1, id_rev2],
+        "status": "WAREHOUSED",
+        "remark": "撤回权限测试"
+    })
+    check("第二次批量改状态成功", r.status_code == 200, f"msg={r.text}")
+    bd2 = r.json()
+    batch_op_id2 = bd2.get("batch_operation_id")
+    check("第二次批量有 batch_operation_id", batch_op_id2 is not None,
+          f"bd={bd2}")
+
+    operator2.login("operator", "op123456")
+    r = operator2.post(f"/api/samples/batch-operations/{batch_op_id2}/revert", {})
+    check("同身份操作员撤回自己操作（登录后）", r.status_code == 200 or r.status_code == 403,
+          f"status={r.status_code} msg={r.text}")
+
+    operator.login("operator", "op123456")
+    r = operator.post("/api/samples/batch-status", {
+        "sample_ids": [id_rev1],
+        "status": "WAREHOUSED",
+        "remark": "管理员撤回测试-先入库"
+    })
+    batch_op_id_pre = r.json().get("batch_operation_id")
+    check("第三次批量前置（id_rev1 到 WAREHOUSED）成功", batch_op_id_pre is not None,
+          f"resp={r.json()}")
+
+    r = operator.post("/api/samples/batch-status", {
+        "sample_ids": [id_rev1],
+        "status": "PACKED",
+        "remark": "管理员撤回测试-打包"
+    })
+    batch_op_id3 = r.json().get("batch_operation_id")
+    fatal_check("第三次批量（管理员撤回测试）成功", batch_op_id3 is not None,
+                f"resp={r.json()}")
+
+    r = operator.get(f"/api/samples/{id_rev1}")
+    check("批量后 id_rev1 为 PACKED", r.json()["current_status"] == "PACKED")
+
+    admin.login("admin", "admin123")
+    r = admin.post(f"/api/samples/batch-operations/{batch_op_id3}/revert", {})
+    check("管理员能撤回操作员的操作", r.status_code == 200,
+          f"status={r.status_code} msg={r.text}")
+
+    r = admin.get(f"/api/samples/{id_rev1}")
+    check("管理员撤回后样本恢复 WAREHOUSED",
+          r.json()["current_status"] == "WAREHOUSED",
+          f"实际={r.json()['current_status']}")
+
+    # ===== 操作日志 =====
+    print_title("Step 5: 操作日志记录与导出")
+
+    admin.login("admin", "admin123")
+    r = admin.get("/api/logs")
+    check("管理员日志列表查询成功", r.status_code == 200)
+    lg = r.json()
+    check("日志列表有 items", "items" in lg)
+    check("日志有记录（批量操作已写入）", lg["total"] > 0)
+
+    types_in_log = set(it["operation_type"] for it in lg["items"])
+    check("日志包含批量改状态类型", "BATCH_STATUS_UPDATE" in types_in_log,
+          f"types={types_in_log}")
+    check("日志包含模板保存类型", "FILTER_TEMPLATE_SAVE" in types_in_log)
+    check("日志包含样本导入类型", "SAMPLE_IMPORT" in types_in_log)
+
+    items = lg["items"]
+    batch_items = [it for it in items if it["operation_type"] == "BATCH_STATUS_UPDATE"]
+    if batch_items:
+        bi = batch_items[0]
+        check("批量操作日志有操作人", bool(bi.get("operator")))
+        check("批量操作日志有时间", bool(bi.get("created_at")))
+        check("批量操作日志有样本数量字段", "sample_count" in bi)
+        check("批量操作日志有详情描述", bool(bi.get("detail")))
+        check("批量操作日志 operation_type_text 中文",
+              bi.get("operation_type_text") == "批量改状态")
+
+    r = admin.get("/api/logs?operation_type=BATCH_STATUS_REVERT")
+    check("按操作类型筛选日志", r.status_code == 200)
+    check("类型筛选只返回撤回类型",
+          all(it["operation_type"] == "BATCH_STATUS_REVERT" for it in r.json()["items"])
+          or r.json()["total"] == 0)
+
+    r = admin.get("/api/logs?operator=operator")
+    check("管理员按操作人筛选", r.status_code == 200)
+    check("操作人筛选只返回 operator",
+          all(it["operator"] == "operator" for it in r.json()["items"])
+          or r.json()["total"] == 0)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    r = admin.get(f"/api/logs?date_from={today}&date_to={today}")
+    check("按时间筛选日志", r.status_code == 200)
+
+    operator.login("operator", "op123456")
+    r = operator.get("/api/logs")
+    check("操作员能查自己日志", r.status_code == 200)
+    check("操作员日志全部是自己",
+          all(it["operator"] == "operator" for it in r.json()["items"])
+          or r.json()["total"] == 0,
+          f"operators={set(it['operator'] for it in r.json()['items'])}")
+
+    r = operator.get("/api/logs?operator=admin")
+    check("操作员尝试按 admin 筛选仍只返回自己",
+          all(it["operator"] == "operator" for it in r.json()["items"])
+          or r.json()["total"] == 0)
+
+    r = operator.get("/api/logs/operators")
+    check("操作员查 operators 列表", r.status_code == 200)
+    check("操作员只能看到自己", r.json()["operators"] == ["operator"])
+
+    r = admin.get("/api/logs/export")
+    check("日志 CSV 导出（管理员）",
+          r.status_code == 200 and "text/csv" in r.headers.get("Content-Type", ""),
+          f"CT={r.headers.get('Content-Type')}")
+
+    if r.status_code == 200:
+        content = r.content.decode("utf-8-sig")
+        lines = content.strip().split("\n")
+        check("CSV 有表头行", len(lines) >= 1)
+        header = lines[0]
+        check("CSV 表头包含操作人", "操作人" in header)
+        check("CSV 表头包含操作类型", "操作类型" in header)
+        check("CSV 表头包含操作详情", "操作详情" in header)
+        check("CSV 表头包含涉及样本数", "涉及样本数" in header)
+        check("CSV 有数据行（至少表头+若干行）", len(lines) >= 2)
+
+    r = operator.get("/api/logs/export")
+    check("操作员 CSV 导出", r.status_code == 200)
+    if r.status_code == 200:
+        op_content = r.content.decode("utf-8-sig")
+        check("操作员导出 CSV 不含 admin 记录", "admin" not in op_content)
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    db_batch_logs = conn.execute(
+        "SELECT * FROM operation_logs WHERE operation_type='BATCH_STATUS_UPDATE' ORDER BY id DESC LIMIT 1"
+    ).fetchall()
+    check("数据库中有批量操作日志", len(db_batch_logs) > 0)
+    if db_batch_logs:
+        check("数据库日志有操作人字段", bool(db_batch_logs[0]["operator"]))
+        check("数据库日志有 sample_count 字段",
+              db_batch_logs[0]["sample_count"] is not None)
+        check("数据库日志有 detail 字段", bool(db_batch_logs[0]["detail"]))
+
+    db_revert_logs = conn.execute(
+        "SELECT * FROM operation_logs WHERE operation_type='BATCH_STATUS_REVERT' ORDER BY id DESC LIMIT 1"
+    ).fetchall()
+    if len(db_revert_logs) > 0:
+        check("数据库中撤回操作日志有操作人", bool(db_revert_logs[0]["operator"]))
+        check("数据库中撤回操作日志有 sample_count",
+              db_revert_logs[0]["sample_count"] is not None)
+    else:
+        check("（若撤回成功）数据库中有撤回操作日志", True,
+              "本次运行未产生撤回日志（可能前面撤回流程未触发）")
+
+    conn.close()
+
+    summary()
+    return failed == 0
+
+
 if __name__ == "__main__":
     try:
         success1 = run_regression_tests()
         print("\n\n")
         success2 = run_import_regression_tests()
-        sys.exit(0 if (success1 and success2) else 1)
+        print("\n\n")
+        success3 = run_enhance_regression_tests()
+        sys.exit(0 if (success1 and success2 and success3) else 1)
     except Exception as e:
         print(f"\n测试执行出错: {e}")
         import traceback

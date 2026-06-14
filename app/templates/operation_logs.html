@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>操作日志 - 实验室样本转运台账</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <span style="font-size: 24px;">🧪</span>
+      <span>实验室样本转运台账</span>
+    </div>
+    <div class="navbar-user">
+      <span id="userInfo"></span>
+      <span class="role-badge" id="userRole"></span>
+      <button class="btn btn-sm" onclick="goToSamples()" style="background: rgba(255,255,255,0.2); color: white; margin-right: 8px;">
+        📋 样本台账
+      </button>
+      <button class="btn btn-sm" onclick="logout()" style="background: rgba(255,255,255,0.2); color: white;">
+        退出
+      </button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div class="page-header">
+      <h1 class="page-title">操作日志</h1>
+      <div class="page-actions">
+        <button class="btn btn-success" onclick="exportLogs()">📄 导出 CSV</button>
+      </div>
+    </div>
+
+    <div class="advanced-filter">
+      <div class="filter-row">
+        <div class="filter-field">
+          <label>操作人</label>
+          <select id="f_operator">
+            <option value="">全部</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label>操作类型</label>
+          <select id="f_type">
+            <option value="">全部</option>
+            <option value="BATCH_STATUS_UPDATE">批量改状态</option>
+            <option value="BATCH_STATUS_REVERT">撤回批量改状态</option>
+            <option value="SAMPLE_STATUS_UPDATE">单样本改状态</option>
+            <option value="SAMPLE_EXCEPTION">录入异常</option>
+            <option value="SAMPLE_REVIEW">异常复核</option>
+            <option value="SAMPLE_IMPORT">批次导入</option>
+            <option value="FILTER_TEMPLATE_SAVE">保存筛选模板</option>
+            <option value="FILTER_TEMPLATE_DELETE">删除筛选模板</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label>时间 从</label>
+          <input type="date" id="f_date_from">
+        </div>
+        <div class="filter-field">
+          <label>到</label>
+          <input type="date" id="f_date_to">
+        </div>
+      </div>
+      <div class="filter-row filter-actions">
+        <div></div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-primary" onclick="doSearch()">🔍 查询</button>
+          <button class="btn" onclick="resetFilters()">🔄 重置</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="padding: 0; overflow: hidden;">
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>操作人</th>
+              <th>操作类型</th>
+              <th>目标</th>
+              <th>详情</th>
+              <th>涉及样本</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody">
+            <tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--gray-400);">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+  <div id="alert-container"></div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/operation_logs.js') }}"></script>
+</body>
+</html>

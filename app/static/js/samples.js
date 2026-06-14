@@ -1,49 +1,106 @@
 let currentPage = 1;
 let perPage = 20;
 let totalPages = 1;
+let selectedIds = new Set();
+let allTemplates = [];
+let lastBatchOpId = null;
+let undoTimer = null;
+let undoSecondsLeft = 0;
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
   loadCurrentUser().then(() => {
-    loadSamples();
+    loadTemplates().then(() => {
+      loadDefaultTemplate().then(() => {
+        loadSamples();
+      });
+    });
+    loadStats();
+    startUndoStatusPoll();
   });
-  
-  document.getElementById('searchInput').addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-      currentPage = 1;
-      loadSamples();
-    }
-  });
-  
-  document.getElementById('statusFilter').addEventListener('change', function() {
-    currentPage = 1;
-    loadSamples();
+
+  ['f_sample_id', 'f_operator', 'f_sample_type'].forEach(id => {
+    document.getElementById(id).addEventListener('keypress', function (e) {
+      if (e.key === 'Enter') {
+        currentPage = 1;
+        doSearch();
+      }
+    });
   });
 });
 
+function goToLogs() {
+  window.location.href = '/operation-logs';
+}
+
+function getFilterParams() {
+  return {
+    sample_id: document.getElementById('f_sample_id').value.trim(),
+    status: document.getElementById('f_status').value,
+    sample_type: document.getElementById('f_sample_type').value.trim(),
+    operator: document.getElementById('f_operator').value.trim(),
+    date_from: document.getElementById('f_date_from').value,
+    date_to: document.getElementById('f_date_to').value,
+    temp_min: document.getElementById('f_temp_min').value,
+    temp_max: document.getElementById('f_temp_max').value
+  };
+}
+
+function setFilterParams(filters) {
+  if (!filters) return;
+  document.getElementById('f_sample_id').value = filters.sample_id || '';
+  document.getElementById('f_status').value = filters.status || '';
+  document.getElementById('f_sample_type').value = filters.sample_type || '';
+  document.getElementById('f_operator').value = filters.operator || '';
+  document.getElementById('f_date_from').value = filters.date_from || '';
+  document.getElementById('f_date_to').value = filters.date_to || '';
+  document.getElementById('f_temp_min').value = filters.temp_min || '';
+  document.getElementById('f_temp_max').value = filters.temp_max || '';
+}
+
+function doSearch() {
+  currentPage = 1;
+  loadSamples();
+}
+
+function resetFilters() {
+  document.getElementById('f_sample_id').value = '';
+  document.getElementById('f_status').value = '';
+  document.getElementById('f_sample_type').value = '';
+  document.getElementById('f_operator').value = '';
+  document.getElementById('f_date_from').value = '';
+  document.getElementById('f_date_to').value = '';
+  document.getElementById('f_temp_min').value = '';
+  document.getElementById('f_temp_max').value = '';
+  document.getElementById('templateSelect').value = '';
+  document.getElementById('deleteTplBtn').style.display = 'none';
+  currentPage = 1;
+  loadSamples();
+}
+
 async function loadSamples() {
-  const search = document.getElementById('searchInput').value.trim();
-  const status = document.getElementById('statusFilter').value;
-  
+  const f = getFilterParams();
   let url = `/api/samples?page=${currentPage}&per_page=${perPage}`;
-  if (search) url += `&search=${encodeURIComponent(search)}`;
-  if (status) url += `&status=${encodeURIComponent(status)}`;
-  
+  for (const [k, v] of Object.entries(f)) {
+    if (v) url += `&${k}=${encodeURIComponent(v)}`;
+  }
+
   const result = await apiRequest(url);
-  
   const tbody = document.getElementById('samplesTableBody');
-  
+
   if (!result || !result.ok) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--danger);">加载失败</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--danger);">加载失败</td></tr>`;
     return;
   }
-  
+
   const data = result.data;
-  
+
   if (data.items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 40px; color: var(--gray-400);">暂无数据</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 40px; color: var(--gray-400);">暂无数据</td></tr>`;
   } else {
     tbody.innerHTML = data.items.map(s => `
       <tr>
+        <td><input type="checkbox" class="sample-check" data-id="${s.id}"
+          ${selectedIds.has(s.id) ? 'checked' : ''} onchange="toggleSampleCheck(${s.id}, this)"></td>
         <td><strong>${s.sample_id}</strong></td>
         <td>${s.batch_no}</td>
         <td>${s.sample_type || '-'}</td>
@@ -56,27 +113,28 @@ async function loadSamples() {
       </tr>
     `).join('');
   }
-  
+
   totalPages = Math.ceil(data.total / perPage);
   renderPagination(data.total);
+  updateSelectAllState();
 }
 
 function renderPagination(total) {
   const pagination = document.getElementById('pagination');
   let html = '';
-  
+
   html += `<button ${currentPage <= 1 ? 'disabled' : ''} onclick="goToPage(${currentPage - 1})">上一页</button>`;
-  
+
   const startPage = Math.max(1, currentPage - 2);
   const endPage = Math.min(totalPages, currentPage + 2);
-  
+
   for (let i = startPage; i <= endPage; i++) {
     html += `<button class="${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
   }
-  
+
   html += `<button ${currentPage >= totalPages ? 'disabled' : ''} onclick="goToPage(${currentPage + 1})">下一页</button>`;
   html += `<span style="line-height: 36px; margin-left: 12px; color: var(--gray-500); font-size: 14px;">共 ${total} 条</span>`;
-  
+
   pagination.innerHTML = html;
 }
 
@@ -86,16 +144,297 @@ function goToPage(page) {
   loadSamples();
 }
 
-function resetFilters() {
-  document.getElementById('searchInput').value = '';
-  document.getElementById('statusFilter').value = '';
+function viewDetail(id) {
+  window.location.href = `/samples/${id}`;
+}
+
+function toggleSampleCheck(id, el) {
+  if (el.checked) {
+    selectedIds.add(id);
+  } else {
+    selectedIds.delete(id);
+  }
+  updateSelectedBar();
+  updateSelectAllState();
+}
+
+function toggleSelectAll() {
+  const selectAll = document.getElementById('selectAll').checked;
+  document.querySelectorAll('.sample-check').forEach(cb => {
+    const id = parseInt(cb.dataset.id);
+    if (selectAll) selectedIds.add(id);
+    else selectedIds.delete(id);
+    cb.checked = selectAll;
+  });
+  updateSelectedBar();
+}
+
+function updateSelectAllState() {
+  const cbs = document.querySelectorAll('.sample-check');
+  const selectAllEl = document.getElementById('selectAll');
+  if (cbs.length === 0) {
+    selectAllEl.checked = false;
+    selectAllEl.indeterminate = false;
+    return;
+  }
+  const checked = Array.from(cbs).filter(c => c.checked).length;
+  if (checked === 0) {
+    selectAllEl.checked = false;
+    selectAllEl.indeterminate = false;
+  } else if (checked === cbs.length) {
+    selectAllEl.checked = true;
+    selectAllEl.indeterminate = false;
+  } else {
+    selectAllEl.checked = false;
+    selectAllEl.indeterminate = true;
+  }
+}
+
+function updateSelectedBar() {
+  const bar = document.getElementById('batchActionBar');
+  document.getElementById('selectedCount').textContent = selectedIds.size;
+  bar.style.display = selectedIds.size > 0 ? 'flex' : 'none';
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('.sample-check').forEach(cb => cb.checked = false);
+  updateSelectedBar();
+  updateSelectAllState();
+}
+
+async function doBatchStatusUpdate() {
+  const newStatus = document.getElementById('batchStatusSelect').value;
+  const remark = document.getElementById('batchRemark').value;
+
+  if (!newStatus) {
+    showAlert('请选择目标状态', 'error');
+    return;
+  }
+  if (selectedIds.size === 0) {
+    showAlert('请先选择样本', 'error');
+    return;
+  }
+
+  const ids = Array.from(selectedIds);
+  const result = await apiRequest('/api/samples/batch-status', {
+    method: 'POST',
+    body: JSON.stringify({ sample_ids: ids, status: newStatus, remark })
+  });
+
+  if (!result || !result.ok) {
+    showAlert(result.data?.error || '批量操作失败', 'error');
+    return;
+  }
+
+  const d = result.data;
+  showAlert(`批量操作成功：成功 ${d.success_count} 个，失败 ${d.failed_count} 个`,
+    d.failed_count > 0 ? 'warning' : 'success');
+
+  if (d.batch_operation_id) {
+    lastBatchOpId = d.batch_operation_id;
+    undoSecondsLeft = d.undo_window_seconds || 300;
+    showUndoToast(d.success_count, d.new_status_text || newStatus);
+  }
+
+  clearSelection();
+  document.getElementById('batchRemark').value = '';
+  document.getElementById('batchStatusSelect').value = '';
+  loadSamples();
+  loadStats();
+}
+
+function showUndoToast(count, statusText) {
+  const toast = document.getElementById('undoToast');
+  document.getElementById('undoToastText').textContent = `已将 ${count} 个样本状态变更为 ${statusText}`;
+  toast.style.display = 'flex';
+  startUndoCountdown();
+}
+
+function hideUndoToast() {
+  document.getElementById('undoToast').style.display = 'none';
+  if (undoTimer) clearInterval(undoTimer);
+  undoTimer = null;
+}
+
+function startUndoCountdown() {
+  if (undoTimer) clearInterval(undoTimer);
+  const countdownEl = document.getElementById('undoCountdown');
+  const btn = document.getElementById('undoBtn');
+  const update = () => {
+    const m = Math.floor(undoSecondsLeft / 60);
+    const s = undoSecondsLeft % 60;
+    countdownEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+    if (undoSecondsLeft <= 0) {
+      btn.disabled = true;
+      hideUndoToast();
+    }
+    undoSecondsLeft--;
+  };
+  update();
+  undoTimer = setInterval(update, 1000);
+}
+
+async function undoLastBatch() {
+  if (!lastBatchOpId) return;
+  if (!confirm('确定要撤回此次批量操作吗？所有受影响的样本将恢复到之前的状态。')) return;
+
+  const result = await apiRequest(`/api/samples/batch-operations/${lastBatchOpId}/revert`, {
+    method: 'POST'
+  });
+
+  if (!result || !result.ok) {
+    showAlert(result.data?.error || '撤回失败', 'error');
+    return;
+  }
+
+  showAlert(`已成功撤回，恢复 ${result.data.reverted_count} 个样本状态`, 'success');
+  hideUndoToast();
+  lastBatchOpId = null;
+  loadSamples();
+  loadStats();
+}
+
+let pollTimer = null;
+function startUndoStatusPoll() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const r = await apiRequest('/api/samples/batch-operations/recent');
+    if (r && r.ok) {
+      const ops = r.data.operations || [];
+      const pending = ops.find(o => o.can_undo);
+      if (pending && !lastBatchOpId) {
+        lastBatchOpId = pending.id;
+        undoSecondsLeft = pending.seconds_remaining;
+        showUndoToast(pending.sample_count, pending.new_status_text);
+      }
+      if (lastBatchOpId && !pending) {
+        hideUndoToast();
+        lastBatchOpId = null;
+      }
+    }
+  }, 15000);
+}
+
+async function loadStats() {
+  const r = await apiRequest('/api/samples/stats');
+  if (!r || !r.ok) return;
+  const d = r.data;
+  document.getElementById('statTotal').textContent = d.total_samples || 0;
+  document.getElementById('statMonth').textContent = d.warehoused_this_month || 0;
+  ['PENDING', 'WAREHOUSED', 'PACKED', 'HANDED_OVER', 'ARRIVED', 'FROZEN', 'REVIEW_CLOSED'].forEach(s => {
+    const el = document.getElementById('stat' + s);
+    if (el) el.textContent = d.status_counts?.[s] || 0;
+  });
+}
+
+function filterByStatus(status) {
+  resetFilters();
+  document.getElementById('f_status').value = status;
   currentPage = 1;
   loadSamples();
 }
 
-function viewDetail(id) {
-  window.location.href = `/samples/${id}`;
+function filterByThisMonth() {
+  resetFilters();
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  document.getElementById('f_date_from').value = first.toISOString().split('T')[0];
+  currentPage = 1;
+  loadSamples();
 }
+
+async function loadTemplates() {
+  const r = await apiRequest('/api/samples/filter-templates');
+  if (!r || !r.ok) return;
+  allTemplates = r.data.templates || [];
+  renderTemplateSelect();
+}
+
+function renderTemplateSelect() {
+  const sel = document.getElementById('templateSelect');
+  sel.innerHTML = '<option value="">-- 选择模板 --</option>';
+  allTemplates.forEach(t => {
+    const mark = t.is_default ? ' ⭐' : '';
+    sel.innerHTML += `<option value="${t.id}">${t.name}${mark}</option>`;
+  });
+}
+
+async function loadDefaultTemplate() {
+  const r = await apiRequest('/api/samples/filter-templates/default');
+  if (!r || !r.ok || !r.data.template) return;
+  setFilterParams(r.data.template.filters);
+  document.getElementById('templateSelect').value = r.data.template.id;
+  document.getElementById('deleteTplBtn').style.display = '';
+}
+
+function applyTemplate() {
+  const id = parseInt(document.getElementById('templateSelect').value);
+  if (!id) {
+    document.getElementById('deleteTplBtn').style.display = 'none';
+    return;
+  }
+  const t = allTemplates.find(x => x.id === id);
+  if (t) {
+    setFilterParams(t.filters);
+    document.getElementById('deleteTplBtn').style.display = '';
+    currentPage = 1;
+    loadSamples();
+  }
+}
+
+function openSaveTemplateModal() {
+  document.getElementById('tplName').value = '';
+  document.getElementById('tplDefault').checked = false;
+  document.getElementById('saveTplAlert').innerHTML = '';
+  document.getElementById('saveTemplateModal').classList.add('active');
+}
+
+function closeSaveTemplateModal() {
+  document.getElementById('saveTemplateModal').classList.remove('active');
+}
+
+async function saveTemplate() {
+  const name = document.getElementById('tplName').value.trim();
+  const isDefault = document.getElementById('tplDefault').checked;
+  if (!name) {
+    showAlert('请输入模板名称', 'error', 'saveTplAlert');
+    return;
+  }
+  const filters = getFilterParams();
+  const r = await apiRequest('/api/samples/filter-templates', {
+    method: 'POST',
+    body: JSON.stringify({ name, filters, is_default: isDefault })
+  });
+  if (!r || !r.ok) {
+    showAlert(r.data?.error || '保存失败', 'error', 'saveTplAlert');
+    return;
+  }
+  showAlert('模板已保存', 'success', 'saveTplAlert');
+  await loadTemplates();
+  if (isDefault) {
+    document.getElementById('templateSelect').value = r.data.template_id;
+    document.getElementById('deleteTplBtn').style.display = '';
+  }
+  setTimeout(closeSaveTemplateModal, 500);
+}
+
+async function deleteCurrentTemplate() {
+  const id = parseInt(document.getElementById('templateSelect').value);
+  if (!id) return;
+  if (!confirm('确定要删除此模板吗？')) return;
+
+  const r = await apiRequest(`/api/samples/filter-templates/${id}`, { method: 'DELETE' });
+  if (!r || !r.ok) {
+    showAlert(r.data?.error || '删除失败', 'error');
+    return;
+  }
+  showAlert('模板已删除', 'success');
+  document.getElementById('templateSelect').value = '';
+  document.getElementById('deleteTplBtn').style.display = 'none';
+  await loadTemplates();
+}
+
 
 let importPreviewData = null;
 let importStep = 'edit';
@@ -133,7 +472,7 @@ function updateImportFooter() {
   const btnPreview = document.getElementById('btnPreviewImport');
   const btnConfirm = document.getElementById('btnConfirmImport');
   const btnBack = document.getElementById('btnBackToEdit');
-  
+
   if (importStep === 'edit') {
     btnPreview.style.display = '';
     btnConfirm.style.display = 'none';
@@ -160,12 +499,12 @@ function backToEdit() {
 async function previewImport() {
   const batchNo = document.getElementById('importBatchNo').value.trim();
   const dataStr = document.getElementById('importData').value.trim();
-  
+
   if (!batchNo) {
     showAlert('请输入批次号', 'error', 'importResult');
     return;
   }
-  
+
   let samples;
   try {
     samples = JSON.parse(dataStr);
@@ -173,35 +512,35 @@ async function previewImport() {
     showAlert('JSON 格式错误: ' + e.message, 'error', 'importResult');
     return;
   }
-  
+
   if (!Array.isArray(samples)) {
     showAlert('数据必须是数组格式', 'error', 'importResult');
     return;
   }
-  
+
   const result = await apiRequest('/api/samples/import/preview', {
     method: 'POST',
     body: JSON.stringify({ batch_no: batchNo, samples })
   });
-  
+
   if (!result || !result.ok) {
     showAlert(result.data?.error || '预检失败', 'error', 'importResult');
     return;
   }
-  
+
   const data = result.data;
   importPreviewData = data;
   importStep = 'preview';
-  
+
   renderPreviewResult(data);
   updateImportFooter();
 }
 
 function renderPreviewResult(data) {
   const preview = document.getElementById('importPreview');
-  
+
   let detailHtml = '';
-  
+
   if (data.importable_count > 0) {
     detailHtml += `
       <div style="margin-top: 16px;">
@@ -226,7 +565,7 @@ function renderPreviewResult(data) {
       </div>
     `;
   }
-  
+
   if (data.duplicate_batch_count > 0) {
     detailHtml += `
       <div style="margin-top: 16px;">
@@ -251,7 +590,7 @@ function renderPreviewResult(data) {
       </div>
     `;
   }
-  
+
   if (data.duplicate_system_count > 0) {
     detailHtml += `
       <div style="margin-top: 16px;">
@@ -276,7 +615,7 @@ function renderPreviewResult(data) {
       </div>
     `;
   }
-  
+
   if (data.missing_fields_count > 0) {
     detailHtml += `
       <div style="margin-top: 16px;">
@@ -301,7 +640,7 @@ function renderPreviewResult(data) {
       </div>
     `;
   }
-  
+
   preview.innerHTML = `
     <div class="import-stats">
       <div class="import-stat">
@@ -327,7 +666,7 @@ function renderPreviewResult(data) {
       ${data.importable_count > 0 ? '确认后将导入所有可导入的样本，重复和无效的将被跳过。' : '没有可导入的样本，请检查数据。'}
     </div>
   `;
-  
+
   document.getElementById('importResult').innerHTML = '';
 }
 
@@ -347,12 +686,12 @@ function toggleDetail(type) {
 async function confirmImport() {
   const batchNo = document.getElementById('importBatchNo').value.trim();
   const dataStr = document.getElementById('importData').value.trim();
-  
+
   if (!batchNo) {
     showAlert('请输入批次号', 'error', 'importResult');
     return;
   }
-  
+
   let samples;
   try {
     samples = JSON.parse(dataStr);
@@ -360,21 +699,21 @@ async function confirmImport() {
     showAlert('JSON 格式错误: ' + e.message, 'error', 'importResult');
     return;
   }
-  
+
   const result = await apiRequest('/api/samples/import', {
     method: 'POST',
     body: JSON.stringify({ batch_no: batchNo, samples })
   });
-  
+
   if (!result || !result.ok) {
     showAlert(result.data?.error || '导入失败', 'error', 'importResult');
     return;
   }
-  
+
   const data = result.data;
   importStep = 'done';
   updateImportFooter();
-  
+
   const preview = document.getElementById('importPreview');
   preview.innerHTML = `
     <div class="import-stats">
@@ -392,17 +731,18 @@ async function confirmImport() {
       </div>
     </div>
   `;
-  
+
   let resultHtml = `<div class="alert alert-success">
     导入完成！批次号：<strong>${data.batch_no}</strong>
     <div style="margin-top: 8px;">
       <button class="btn btn-sm btn-info" onclick="viewImportRecord(${data.batch_id})">📋 查看导入详情</button>
     </div>
   </div>`;
-  
+
   document.getElementById('importResult').innerHTML = resultHtml;
-  
+
   loadSamples();
+  loadStats();
 }
 
 function viewImportRecord(batchId) {
@@ -412,11 +752,11 @@ function viewImportRecord(batchId) {
 function exportHandover() {
   const batchNo = prompt('请输入要导出的批次号（留空导出全部）：', '');
   if (batchNo === null) return;
-  
+
   let url = '/api/export/handover';
   if (batchNo.trim()) {
     url += `?batch_no=${encodeURIComponent(batchNo.trim())}`;
   }
-  
+
   window.location.href = url;
 }

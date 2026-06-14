@@ -15,12 +15,15 @@
     <div class="navbar-user">
       <span id="userInfo"></span>
       <span class="role-badge" id="userRole"></span>
+      <button class="btn btn-sm" onclick="goToLogs()" style="background: rgba(255,255,255,0.2); color: white; margin-right: 8px;">
+        📜 操作日志
+      </button>
       <button class="btn btn-sm" onclick="logout()" style="background: rgba(255,255,255,0.2); color: white;">
         退出
       </button>
     </div>
   </nav>
-  
+
   <div class="container">
     <div class="page-header">
       <h1 class="page-title">样本台账</h1>
@@ -36,28 +39,131 @@
         </button>
       </div>
     </div>
-    
-    <div class="filter-bar">
-      <input type="text" id="searchInput" placeholder="搜索 sample_id / 批次号..." style="flex: 1; min-width: 200px;">
-      <select id="statusFilter">
-        <option value="">全部状态</option>
-        <option value="PENDING">待入库</option>
+
+    <div id="undoToast" class="undo-toast" style="display: none;">
+      <span id="undoToastText">批量状态修改成功</span>
+      <button class="btn btn-sm btn-warning" id="undoBtn" onclick="undoLastBatch()">↩️ 撤回</button>
+      <span id="undoCountdown" class="undo-countdown"></span>
+      <button class="undo-close" onclick="hideUndoToast()">×</button>
+    </div>
+
+    <div class="stats-panel">
+      <div class="stat-card stat-total" onclick="filterByStatus('')">
+        <div class="stat-label">样本总数</div>
+        <div class="stat-value" id="statTotal">0</div>
+      </div>
+      <div class="stat-card stat-pending" onclick="filterByStatus('PENDING')">
+        <div class="stat-label">待入库</div>
+        <div class="stat-value" id="statPENDING">0</div>
+      </div>
+      <div class="stat-card stat-warehoused" onclick="filterByStatus('WAREHOUSED')">
+        <div class="stat-label">已入库</div>
+        <div class="stat-value" id="statWAREHOUSED">0</div>
+      </div>
+      <div class="stat-card stat-packed" onclick="filterByStatus('PACKED')">
+        <div class="stat-label">已打包</div>
+        <div class="stat-value" id="statPACKED">0</div>
+      </div>
+      <div class="stat-card stat-handed" onclick="filterByStatus('HANDED_OVER')">
+        <div class="stat-label">已交接</div>
+        <div class="stat-value" id="statHANDED_OVER">0</div>
+      </div>
+      <div class="stat-card stat-arrived" onclick="filterByStatus('ARRIVED')">
+        <div class="stat-label">已到达</div>
+        <div class="stat-value" id="statARRIVED">0</div>
+      </div>
+      <div class="stat-card stat-frozen" onclick="filterByStatus('FROZEN')">
+        <div class="stat-label">异常冻结</div>
+        <div class="stat-value" id="statFROZEN">0</div>
+      </div>
+      <div class="stat-card stat-month" onclick="filterByThisMonth()">
+        <div class="stat-label">本月入库量</div>
+        <div class="stat-value" id="statMonth">0</div>
+      </div>
+    </div>
+
+    <div class="advanced-filter">
+      <div class="filter-row">
+        <div class="filter-field">
+          <label>样本编号</label>
+          <input type="text" id="f_sample_id" placeholder="sample_id">
+        </div>
+        <div class="filter-field">
+          <label>状态</label>
+          <select id="f_status">
+            <option value="">全部</option>
+            <option value="PENDING">待入库</option>
+            <option value="WAREHOUSED">已入库</option>
+            <option value="PACKED">已打包</option>
+            <option value="HANDED_OVER">已交接</option>
+            <option value="ARRIVED">已到达</option>
+            <option value="FROZEN">异常冻结</option>
+            <option value="REVIEW_CLOSED">已复核关闭</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label>样本类型</label>
+          <input type="text" id="f_sample_type" placeholder="如：全血/血清">
+        </div>
+        <div class="filter-field">
+          <label>操作人</label>
+          <input type="text" id="f_operator" placeholder="操作人">
+        </div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-field">
+          <label>创建时间 从</label>
+          <input type="date" id="f_date_from">
+        </div>
+        <div class="filter-field">
+          <label>到</label>
+          <input type="date" id="f_date_to">
+        </div>
+        <div class="filter-field">
+          <label>温度 ≥</label>
+          <input type="number" id="f_temp_min" step="0.1" placeholder="最低°C">
+        </div>
+        <div class="filter-field">
+          <label>温度 ≤</label>
+          <input type="number" id="f_temp_max" step="0.1" placeholder="最高°C">
+        </div>
+      </div>
+      <div class="filter-row filter-actions">
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <label>筛选模板</label>
+          <select id="templateSelect" onchange="applyTemplate()">
+            <option value="">-- 选择模板 --</option>
+          </select>
+          <button class="btn btn-sm btn-primary" onclick="openSaveTemplateModal()">💾 保存</button>
+          <button class="btn btn-sm btn-danger" id="deleteTplBtn" onclick="deleteCurrentTemplate()" style="display: none;">🗑 删除</button>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-primary" onclick="doSearch()">🔍 查询</button>
+          <button class="btn" onclick="resetFilters()">🔄 重置</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="batchActionBar" class="batch-action-bar" style="display: none;">
+      <span>已选 <strong id="selectedCount">0</strong> 个样本</span>
+      <select id="batchStatusSelect">
+        <option value="">选择目标状态...</option>
         <option value="WAREHOUSED">已入库</option>
         <option value="PACKED">已打包</option>
         <option value="HANDED_OVER">已交接</option>
         <option value="ARRIVED">已到达</option>
-        <option value="FROZEN">异常冻结</option>
-        <option value="REVIEW_CLOSED">已复核关闭</option>
       </select>
-      <button class="btn btn-primary" onclick="loadSamples()">🔍 查询</button>
-      <button class="btn" onclick="resetFilters()">🔄 重置</button>
+      <input type="text" id="batchRemark" placeholder="备注（可选）" style="flex: 1;">
+      <button class="btn btn-accent" onclick="doBatchStatusUpdate()">批量改状态</button>
+      <button class="btn" onclick="clearSelection()">取消</button>
     </div>
-    
+
     <div class="card" style="padding: 0; overflow: hidden;">
       <div style="overflow-x: auto;">
         <table>
           <thead>
             <tr>
+              <th style="width: 40px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
               <th>样本编号</th>
               <th>批次号</th>
               <th>样本类型</th>
@@ -68,15 +174,15 @@
             </tr>
           </thead>
           <tbody id="samplesTableBody">
-            <tr><td colspan="7" style="text-align: center; padding: 40px; color: var(--gray-400);">加载中...</td></tr>
+            <tr><td colspan="8" style="text-align: center; padding: 40px; color: var(--gray-400);">加载中...</td></tr>
           </tbody>
         </table>
       </div>
     </div>
-    
+
     <div class="pagination" id="pagination"></div>
   </div>
-  
+
   <div class="modal-overlay" id="importModal">
     <div class="modal" style="max-width: 720px;">
       <div class="modal-header">
@@ -88,7 +194,7 @@
           <label class="form-label">批次号 *</label>
           <input type="text" id="importBatchNo" class="form-input" placeholder="例如：BATCH-20240601-001">
         </div>
-        
+
         <div class="form-group">
           <label class="form-label">样本数据 (JSON 格式)</label>
           <textarea id="importData" class="form-textarea" rows="8" placeholder='[
@@ -96,12 +202,12 @@
   {"sample_id": "S002", "sample_type": "唾液"}
 ]'></textarea>
         </div>
-        
+
         <div style="margin-bottom: 12px;">
           <button class="btn btn-sm" onclick="loadSampleData()" style="margin-right: 8px;">📋 加载示例数据</button>
           <span style="font-size: 12px; color: var(--gray-500);">支持 sample_id 和 sample_type 字段</span>
         </div>
-        
+
         <div id="importPreview"></div>
         <div id="importResult"></div>
       </div>
@@ -113,7 +219,34 @@
       </div>
     </div>
   </div>
-  
+
+  <div class="modal-overlay" id="saveTemplateModal">
+    <div class="modal" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 class="modal-title">保存筛选模板</h3>
+        <button class="modal-close" onclick="closeSaveTemplateModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">模板名称 *</label>
+          <input type="text" id="tplName" class="form-input" placeholder="例如：待审核样本">
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            <input type="checkbox" id="tplDefault"> 设为默认模板（下次打开自动应用）
+          </label>
+        </div>
+        <div id="saveTplAlert"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeSaveTemplateModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveTemplate()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="alert-container"></div>
+
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
   <script src="{{ url_for('static', filename='js/samples.js') }}"></script>
 </body>

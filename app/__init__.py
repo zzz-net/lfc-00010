@@ -45,11 +45,13 @@ def create_app():
     from app.routes.samples import samples_bp
     from app.routes.export import export_bp
     from app.routes.evidence import evidence_bp
+    from app.routes.logs import logs_bp
     
     app.register_blueprint(pages_bp)
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(samples_bp, url_prefix='/api/samples')
     app.register_blueprint(export_bp, url_prefix='/api/export')
     app.register_blueprint(evidence_bp, url_prefix='/api/evidence')
+    app.register_blueprint(logs_bp, url_prefix='/api/logs')
     
     return app

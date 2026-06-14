@@ -26,3 +26,9 @@ def sample_detail_page(sample_id):
 @login_required
 def import_records_page():
     return render_template('import_records.html')
+
+
+@pages_bp.route('/operation-logs')
+@login_required
+def operation_logs_page():
+    return render_template('operation_logs.html')
