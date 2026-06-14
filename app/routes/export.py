@@ -96,6 +96,75 @@ def export_handover():
     
     return response
 
+@export_bp.route('/import-batch/<int:batch_id>', methods=['GET'])
+@login_required
+def export_import_batch(batch_id):
+    from flask_login import current_user
+    
+    conn = get_db()
+    
+    batch_row = conn.execute(
+        'SELECT * FROM import_batches WHERE id = ?', (batch_id,)
+    ).fetchone()
+    
+    if not batch_row:
+        conn.close()
+        return jsonify({'error': '批次记录不存在'}), 404
+    
+    if not current_user.is_admin() and batch_row['operator'] != current_user.username:
+        conn.close()
+        return jsonify({'error': '无权导出此批次记录'}), 403
+    
+    items = conn.execute(
+        'SELECT * FROM import_batch_items WHERE batch_id = ? ORDER BY id ASC',
+        (batch_id,)
+    ).fetchall()
+    
+    conn.close()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    writer.writerow(['导入批次汇总'])
+    writer.writerow(['批次号', batch_row['batch_no']])
+    writer.writerow(['操作人', batch_row['operator']])
+    writer.writerow(['导入时间', batch_row['created_at']])
+    writer.writerow(['总数', batch_row['total_count']])
+    writer.writerow(['成功导入', batch_row['success_count']])
+    writer.writerow(['重复跳过', batch_row['duplicate_count']])
+    writer.writerow(['无效/缺失', batch_row['invalid_count']])
+    writer.writerow([])
+    
+    writer.writerow(['=== 导入明细 ==='])
+    writer.writerow(['序号', '样本编号', '样本类型', '结果', '原因', '样本库ID'])
+    
+    result_map = {
+        'success': '成功导入',
+        'duplicate_batch': '本批次重复',
+        'duplicate_system': '系统已存在',
+        'missing_fields': '字段缺失',
+        'invalid': '无效数据'
+    }
+    
+    for idx, item in enumerate(items, 1):
+        writer.writerow([
+            idx,
+            item['sample_id'] or '',
+            item['sample_type'] or '',
+            result_map.get(item['result'], item['result']),
+            item['reason'] or '',
+            item['sample_db_id'] or ''
+        ])
+    
+    output.seek(0)
+    filename = f'import_batch_{batch_row["batch_no"]}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+    
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8-sig'
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    
+    return response
+
 @export_bp.route('/sample-timeline/<int:sample_id>', methods=['GET'])
 @login_required
 def export_sample_timeline(sample_id):

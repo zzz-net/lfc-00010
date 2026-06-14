@@ -728,7 +728,127 @@ tbody tr:last-child td {
   color: var(--gray-500);
 }
 
+.detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.detail-table th,
+.detail-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--gray-100);
+  text-align: left;
+}
+
+.detail-table th {
+  background: var(--gray-50);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--gray-600);
+}
+
+.import-detail-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+}
+
+.import-detail-list .detail-table {
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.batch-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.batch-stat-card {
+  background: white;
+  padding: 16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  text-align: center;
+}
+
+.batch-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.batch-stat-label {
+  font-size: 13px;
+  color: var(--gray-500);
+}
+
+.batch-stat-value.success { color: var(--success); }
+.batch-stat-value.warning { color: var(--warning); }
+.batch-stat-value.danger { color: var(--danger); }
+.batch-stat-value.primary { color: var(--primary); }
+
+.result-filter {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.result-filter button {
+  padding: 6px 14px;
+  border: 1px solid var(--gray-300);
+  background: white;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.result-filter button.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge-success { background: #d1fae5; color: #065f46; }
+.badge-warning { background: #fef3c7; color: #92400e; }
+.badge-danger { background: #fee2e2; color: #991b1b; }
+.badge-info { background: #dbeafe; color: #1e40af; }
+
+.page-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  align-items: center;
+}
+
+.page-nav a,
+.page-nav span {
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  color: var(--gray-600);
+}
+
+.page-nav a:hover {
+  color: var(--primary);
+}
+
 @media (max-width: 768px) {
+  .batch-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
   .container {
     padding: 16px;
   }

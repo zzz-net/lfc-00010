@@ -28,6 +28,9 @@
         <button class="btn btn-accent" onclick="openImportModal()">
           📥 批次导入
         </button>
+        <button class="btn btn-info" onclick="goToImportRecords()">
+          📋 导入记录
+        </button>
         <button class="btn btn-success" onclick="exportHandover()">
           📄 导出交接单
         </button>
@@ -75,7 +78,7 @@
   </div>
   
   <div class="modal-overlay" id="importModal">
-    <div class="modal" style="max-width: 700px;">
+    <div class="modal" style="max-width: 720px;">
       <div class="modal-header">
         <h3 class="modal-title">批次导入样本</h3>
         <button class="modal-close" onclick="closeImportModal()">&times;</button>
@@ -102,10 +105,11 @@
         <div id="importPreview"></div>
         <div id="importResult"></div>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer" id="importModalFooter">
         <button class="btn" onclick="closeImportModal()">取消</button>
-        <button class="btn btn-primary" onclick="previewImport()">预览</button>
-        <button class="btn btn-accent" onclick="confirmImport()">确认导入</button>
+        <button class="btn btn-primary" id="btnPreviewImport" onclick="previewImport()">预检</button>
+        <button class="btn btn-accent" id="btnConfirmImport" onclick="confirmImport()" style="display:none;">确认导入</button>
+        <button class="btn" id="btnBackToEdit" onclick="backToEdit()" style="display:none;">返回修改</button>
       </div>
     </div>
   </div>

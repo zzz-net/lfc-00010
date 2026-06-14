@@ -417,6 +417,309 @@ def run_regression_tests():
     return failed == 0
 
 
+def run_import_regression_tests():
+    """批次导入功能回归测试 - 覆盖预检、确认、权限、持久化、CSV导出
+    """
+    global passed, failed
+    passed = 0
+    failed = 0
+
+    print("\n" + "=" * 60)
+    print("  批次导入功能 - 回归测试")
+    print("  验证项：预检、确认导入、记录持久化、权限控制、CSV导出")
+    print("=" * 60)
+
+    admin = TestClient()
+    operator = TestClient()
+
+    admin.login("admin", "admin123")
+    operator.login("operator", "op123456")
+
+    batch_no = f"IMP-REG-{int(time.time() * 1000)}"
+
+    sid_new_1 = uid("IMP1")
+    sid_new_2 = uid("IMP2")
+    sid_new_3 = uid("IMP3")
+    sid_dup_batch = uid("IMPDUP")
+
+    import_samples = [
+        {"sample_id": sid_new_1, "sample_type": "全血"},
+        {"sample_id": sid_new_2, "sample_type": "血清"},
+        {"sample_id": sid_new_3, "sample_type": "血浆"},
+        {"sample_id": sid_dup_batch, "sample_type": "血浆"},
+        {"sample_id": sid_dup_batch, "sample_type": "尿液"},
+        {"sample_type": "唾液"},
+        {"sample_id": "  ", "sample_type": "空白ID"}
+    ]
+
+    print_title("Step 1: 预检接口验证")
+
+    r = operator.post("/api/samples/import/preview", {
+        "batch_no": batch_no + "-PRE",
+        "samples": import_samples
+    })
+    check("预检接口返回成功", r.status_code == 200, f"状态码: {r.status_code}")
+
+    if r.status_code == 200:
+        data = r.json()
+        check("预检返回总数正确", data.get("total_count") == 7,
+              f"total_count={data.get('total_count')}")
+        check("预检返回可导入数量正确", data.get("importable_count") == 4,
+              f"importable_count={data.get('importable_count')}")
+        check("预检返回本批次重复数量正确", data.get("duplicate_batch_count") == 1,
+              f"duplicate_batch_count={data.get('duplicate_batch_count')}")
+        check("预检返回系统已存在数量为0（首次导入）", data.get("duplicate_system_count") == 0,
+              f"duplicate_system_count={data.get('duplicate_system_count')}")
+        check("预检返回字段缺失数量正确", data.get("missing_fields_count") == 2,
+              f"missing_fields_count={data.get('missing_fields_count')}")
+
+        check("预检返回可导入明细列表", len(data.get("importable", [])) == 4)
+        check("预检返回本批重复明细列表", len(data.get("duplicates_batch", [])) == 1)
+        check("预检返回字段缺失明细列表", len(data.get("missing_fields", [])) == 2)
+
+        importable_ids = [s["sample_id"] for s in data.get("importable", [])]
+        check("可导入列表包含 sid_new_1", sid_new_1 in importable_ids)
+        check("可导入列表包含 sid_new_2", sid_new_2 in importable_ids)
+        check("可导入列表包含 sid_new_3", sid_new_3 in importable_ids)
+        check("可导入列表包含 sid_dup_batch（首次出现）", sid_dup_batch in importable_ids)
+
+    print_title("Step 2: 确认导入 & 批次记录持久化")
+
+    r = operator.post("/api/samples/import", {
+        "batch_no": batch_no,
+        "samples": import_samples
+    })
+    check("确认导入接口返回成功", r.status_code == 200, f"状态码: {r.status_code}")
+
+    if r.status_code == 200:
+        data = r.json()
+        check("确认导入返回成功标识", data.get("success") == True)
+        check("确认导入返回批次ID", data.get("batch_id") is not None)
+        check("确认导入返回成功数正确", data.get("success_count") == 4,
+              f"success_count={data.get('success_count')}")
+        check("确认导入返回重复数正确（本批）", data.get("duplicate_count") == 1,
+              f"duplicate_count={data.get('duplicate_count')}")
+        check("确认导入返回缺失字段数正确", data.get("missing_fields_count") == 2,
+              f"missing_fields_count={data.get('missing_fields_count')}")
+        check("确认导入返回总数正确", data.get("total_count") == 7,
+              f"total_count={data.get('total_count')}")
+
+        batch_id = data.get("batch_id")
+    else:
+        fatal_check("确认导入成功", False, f"返回: {r.text}")
+        return False
+
+    print_title("Step 3: 导入记录列表查询")
+
+    r = operator.get("/api/samples/import/batches")
+    check("导入记录列表接口返回成功", r.status_code == 200)
+
+    if r.status_code == 200:
+        list_data = r.json()
+        check("导入记录列表包含items", "items" in list_data)
+        check("导入记录列表至少有1条", len(list_data.get("items", [])) >= 1)
+
+        found = False
+        for item in list_data.get("items", []):
+            if item.get("batch_no") == batch_no:
+                found = True
+                check("列表中批次号正确", item.get("batch_no") == batch_no)
+                check("列表中操作人正确", item.get("operator") == "operator")
+                check("列表中总数正确", item.get("total_count") == 7)
+                check("列表中成功数正确", item.get("success_count") == 4)
+                check("列表中重复数正确", item.get("duplicate_count") == 1)
+                check("列表中无效数正确", item.get("invalid_count") == 2)
+                check("列表中有创建时间", bool(item.get("created_at")))
+                break
+        check("能在列表中找到刚导入的批次", found)
+
+    print_title("Step 4: 导入记录详情查询")
+
+    r = operator.get(f"/api/samples/import/batches/{batch_id}")
+    check("批次详情接口返回成功", r.status_code == 200)
+
+    if r.status_code == 200:
+        detail_data = r.json()
+        batch_info = detail_data.get("batch", {})
+
+        check("详情中批次号正确", batch_info.get("batch_no") == batch_no)
+        check("详情中操作人正确", batch_info.get("operator") == "operator")
+        check("详情中总数正确", batch_info.get("total_count") == 7)
+        check("详情中成功数正确", batch_info.get("success_count") == 4)
+        check("详情中重复数正确", batch_info.get("duplicate_count") == 1)
+        check("详情中无效数正确", batch_info.get("invalid_count") == 2)
+
+        items = detail_data.get("items", [])
+        check("批次明细总数正确", detail_data.get("items_total") == 7)
+
+        success_items = [i for i in items if i["result"] == "success"]
+        check("明细中成功条目数正确", len(success_items) == 4)
+
+        dup_batch_items = [i for i in items if i["result"] == "duplicate_batch"]
+        check("明细中本批重复条目数正确", len(dup_batch_items) == 1)
+
+        missing_items = [i for i in items if i["result"] == "missing_fields"]
+        check("明细中字段缺失条目数正确", len(missing_items) == 2)
+
+        if len(success_items) > 0:
+            item = success_items[0]
+            check("成功条目有 sample_db_id", item.get("sample_db_id") is not None)
+            check("成功条目有 sample_id", bool(item.get("sample_id")))
+
+    print_title("Step 5: 权限控制 - 管理员能看全部")
+
+    r = admin.get("/api/samples/import/batches?operator=operator")
+    check("管理员按操作人筛选返回成功", r.status_code == 200)
+    if r.status_code == 200:
+        admin_list = r.json()
+        found_admin = any(
+            item.get("batch_no") == batch_no
+            for item in admin_list.get("items", [])
+        )
+        check("管理员能看到操作员的导入记录", found_admin)
+
+    print_title("Step 6: 重启后持久化验证（数据库直接查）")
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    db_batch = conn.execute(
+        "SELECT * FROM import_batches WHERE id = ?", (batch_id,)
+    ).fetchone()
+    check("数据库中批次记录存在", db_batch is not None)
+
+    if db_batch:
+        check("数据库中批次号正确", db_batch["batch_no"] == batch_no)
+        check("数据库中操作人正确", db_batch["operator"] == "operator")
+        check("数据库中总数正确", db_batch["total_count"] == 7)
+        check("数据库中成功数正确", db_batch["success_count"] == 4)
+        check("数据库中重复数正确", db_batch["duplicate_count"] == 1)
+        check("数据库中无效数正确", db_batch["invalid_count"] == 2)
+        check("数据库中状态为 completed", db_batch["status"] == "completed")
+        check("数据库中有创建时间", bool(db_batch["created_at"]))
+
+    db_items = conn.execute(
+        "SELECT * FROM import_batch_items WHERE batch_id = ? ORDER BY id",
+        (batch_id,)
+    ).fetchall()
+    check("数据库中批次明细记录数正确", len(db_items) == 7)
+
+    db_success = [i for i in db_items if i["result"] == "success"]
+    check("数据库中成功条目有 sample_db_id",
+          all(i["sample_db_id"] is not None for i in db_success))
+
+    conn.close()
+
+    print_title("Step 7: 冲突样本不覆盖旧数据")
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    old_sample = conn.execute(
+        "SELECT * FROM samples WHERE sample_id = ?", (sid_new_1,)
+    ).fetchone()
+    old_status = old_sample["current_status"]
+    old_id = old_sample["id"]
+
+    check("首次导入后状态为 PENDING", old_status == "PENDING")
+
+    logs = conn.execute(
+        "SELECT * FROM status_logs WHERE sample_id = ? ORDER BY id",
+        (old_id,)
+    ).fetchall()
+    check("状态日志有记录", len(logs) > 0)
+    check("首条日志来源为批次导入",
+          logs[0]["remark"] == "批次导入")
+    check("首条日志操作人正确", logs[0]["operator"] == "operator")
+
+    conn.close()
+
+    r2 = operator.post("/api/samples/import", {
+        "batch_no": batch_no + "-DUP",
+        "samples": [
+            {"sample_id": sid_new_1, "sample_type": "被覆盖？"},
+            {"sample_id": sid_new_2, "sample_type": "被覆盖？"},
+        ]
+    })
+    check("重复导入相同样本返回成功", r2.status_code == 200)
+    if r2.status_code == 200:
+        data2 = r2.json()
+        check("重复导入成功数为0", data2.get("success_count") == 0,
+              f"success_count={data2.get('success_count')}")
+        check("重复导入系统已存在数为2", data2.get("duplicate_system_count") == 2,
+              f"duplicate_system_count={data2.get('duplicate_system_count')}")
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    after_sample = conn.execute(
+        "SELECT * FROM samples WHERE sample_id = ?", (sid_new_1,)
+    ).fetchone()
+    check("重复导入后样本类型未被覆盖", after_sample["sample_type"] == "全血")
+    check("重复导入后状态仍为 PENDING", after_sample["current_status"] == "PENDING")
+    check("重复导入后样本ID不变", after_sample["id"] == old_id)
+    conn.close()
+
+    print_title("Step 8: CSV 导出功能")
+
+    r = operator.get(f"/api/export/import-batch/{batch_id}")
+    check("CSV导出接口返回成功", r.status_code == 200,
+          f"状态码: {r.status_code}")
+
+    if r.status_code == 200:
+        content_type = r.headers.get("Content-Type", "")
+        check("CSV导出Content-Type正确", "text/csv" in content_type,
+              f"Content-Type: {content_type}")
+
+        content = r.content.decode("utf-8-sig")
+        check("CSV内容包含批次号", batch_no in content)
+        check("CSV内容包含操作人", "operator" in content)
+        check("CSV内容包含成功导入", "成功导入" in content)
+        check("CSV内容包含导入明细表头", "导入明细" in content)
+        check("CSV内容包含样本编号列", "样本编号" in content)
+        check("CSV内容包含结果列", "结果" in content)
+
+        lines = content.strip().split("\n")
+        check("CSV有足够行数", len(lines) > 10)
+
+    print_title("Step 9: 详情结果筛选")
+
+    r = operator.get(f"/api/samples/import/batches/{batch_id}?result=success")
+    check("按成功筛选返回成功", r.status_code == 200)
+    if r.status_code == 200:
+        data = r.json()
+        check("筛选后总数为4", data.get("items_total") == 4)
+        check("筛选后items都是success",
+              all(i["result"] == "success" for i in data.get("items", [])))
+
+    r = operator.get(f"/api/samples/import/batches/{batch_id}?result=missing_fields")
+    check("按字段缺失筛选返回成功", r.status_code == 200)
+    if r.status_code == 200:
+        data = r.json()
+        check("筛选后字段缺失数为2", data.get("items_total") == 2)
+
+    print_title("Step 10: 状态日志保留批次导入来源")
+
+    if len(db_success) > 0:
+        sample_db_id = db_success[0]["sample_db_id"]
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        logs = conn.execute(
+            "SELECT * FROM status_logs WHERE sample_id = ? ORDER BY id ASC",
+            (sample_db_id,)
+        ).fetchall()
+        conn.close()
+
+        check("成功导入样本有状态日志", len(logs) > 0)
+        if len(logs) > 0:
+            check("首条日志状态为 PENDING", logs[0]["status"] == "PENDING")
+            check("首条日志备注为批次导入", logs[0]["remark"] == "批次导入")
+            check("首条日志操作人为 operator", logs[0]["operator"] == "operator")
+            check("首条日志 previous_status 为 None", logs[0]["previous_status"] is None)
+
+    summary()
+    return failed == 0
+
+
 def print_title(title):
     print(f"\n{'='*60}")
     print(f"  {title}")
@@ -425,8 +728,10 @@ def print_title(title):
 
 if __name__ == "__main__":
     try:
-        success = run_regression_tests()
-        sys.exit(0 if success else 1)
+        success1 = run_regression_tests()
+        print("\n\n")
+        success2 = run_import_regression_tests()
+        sys.exit(0 if (success1 and success2) else 1)
     except Exception as e:
         print(f"\n测试执行出错: {e}")
         import traceback

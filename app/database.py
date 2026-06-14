@@ -78,10 +78,41 @@ def init_db():
         )
     ''')
     
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS import_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_no VARCHAR(100) NOT NULL,
+            operator VARCHAR(50) NOT NULL,
+            total_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            duplicate_count INTEGER NOT NULL DEFAULT 0,
+            invalid_count INTEGER NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'completed',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS import_batch_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            sample_id VARCHAR(100),
+            sample_type VARCHAR(100),
+            result VARCHAR(20) NOT NULL,
+            reason TEXT,
+            sample_db_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (batch_id) REFERENCES import_batches(id)
+        )
+    ''')
+
     c.execute('CREATE INDEX IF NOT EXISTS idx_samples_batch ON samples(batch_no)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_samples_status ON samples(current_status)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_status_logs_sample ON status_logs(sample_id)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_evidences_sample ON evidences(sample_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_import_batches_operator ON import_batches(operator)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_import_batches_batch_no ON import_batches(batch_no)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_import_batch_items_batch ON import_batch_items(batch_id)')
     
     c.execute("SELECT COUNT(*) FROM users")
     if c.fetchone()[0] == 0:

@@ -21,3 +21,8 @@ def samples_page():
 @login_required
 def sample_detail_page(sample_id):
     return render_template('sample_detail.html', sample_id=sample_id)
+
+@pages_bp.route('/import-records')
+@login_required
+def import_records_page():
+    return render_template('import_records.html')

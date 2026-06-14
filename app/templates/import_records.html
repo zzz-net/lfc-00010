@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>导入记录 - 实验室样本转运台账</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <span style="font-size: 24px;">🧪</span>
+      <span>实验室样本转运台账</span>
+    </div>
+    <div class="navbar-user">
+      <span id="userInfo"></span>
+      <span class="role-badge" id="userRole"></span>
+      <button class="btn btn-sm" onclick="logout()" style="background: rgba(255,255,255,0.2); color: white;">
+        退出
+      </button>
+    </div>
+  </nav>
+  
+  <div class="container">
+    <div class="page-nav">
+      <a href="/samples">← 返回样本列表</a>
+    </div>
+    
+    <div class="page-header">
+      <h1 class="page-title">导入记录</h1>
+      <div class="page-actions">
+        <button class="btn btn-accent" onclick="goBackToImport()">📥 新建导入</button>
+      </div>
+    </div>
+    
+    <div id="batchListView">
+      <div class="filter-bar">
+        <input type="text" id="batchNoSearch" placeholder="搜索批次号..." style="flex: 1; min-width: 200px;">
+        <button class="btn btn-primary" onclick="loadBatches()">🔍 查询</button>
+        <button class="btn" onclick="resetBatchFilters()">🔄 重置</button>
+      </div>
+      
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>批次号</th>
+                <th>操作人</th>
+                <th>总数</th>
+                <th>成功</th>
+                <th>重复</th>
+                <th>无效</th>
+                <th>导入时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="batchesTableBody">
+              <tr><td colspan="8" style="text-align: center; padding: 40px; color: var(--gray-400);">加载中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <div class="pagination" id="batchPagination"></div>
+    </div>
+    
+    <div id="batchDetailView" style="display: none;">
+      <div class="batch-stats">
+        <div class="batch-stat-card">
+          <div class="batch-stat-value primary" id="statTotal">0</div>
+          <div class="batch-stat-label">总数</div>
+        </div>
+        <div class="batch-stat-card">
+          <div class="batch-stat-value success" id="statSuccess">0</div>
+          <div class="batch-stat-label">成功导入</div>
+        </div>
+        <div class="batch-stat-card">
+          <div class="batch-stat-value warning" id="statDuplicate">0</div>
+          <div class="batch-stat-label">重复跳过</div>
+        </div>
+        <div class="batch-stat-card">
+          <div class="batch-stat-value danger" id="statInvalid">0</div>
+          <div class="batch-stat-label">无效/缺失</div>
+        </div>
+      </div>
+      
+      <div class="card" style="margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div style="font-size: 18px; font-weight: 600; margin-bottom: 4px;" id="detailBatchNo">-</div>
+            <div style="font-size: 13px; color: var(--gray-500);">
+              操作人：<span id="detailOperator">-</span>
+              ｜ 导入时间：<span id="detailTime">-</span>
+            </div>
+          </div>
+          <div>
+            <button class="btn btn-success" onclick="exportBatchResult()">📄 导出 CSV</button>
+            <button class="btn" onclick="backToList()">← 返回列表</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="result-filter">
+        <button class="active" onclick="filterResult('')" data-filter="">全部</button>
+        <button onclick="filterResult('success')" data-filter="success">成功</button>
+        <button onclick="filterResult('duplicate_batch')" data-filter="duplicate_batch">本批次重复</button>
+        <button onclick="filterResult('duplicate_system')" data-filter="duplicate_system">系统已存在</button>
+        <button onclick="filterResult('missing_fields')" data-filter="missing_fields">字段缺失</button>
+        <button onclick="filterResult('invalid')" data-filter="invalid">无效</button>
+      </div>
+      
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>样本编号</th>
+                <th>样本类型</th>
+                <th>结果</th>
+                <th>原因</th>
+              </tr>
+            </thead>
+            <tbody id="batchItemsBody">
+              <tr><td colspan="5" style="text-align: center; padding: 40px; color: var(--gray-400);">加载中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <div class="pagination" id="itemsPagination"></div>
+    </div>
+  </div>
+  
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/import_records.js') }}"></script>
+</body>
+</html>

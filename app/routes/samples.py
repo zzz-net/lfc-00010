@@ -23,6 +23,55 @@ def row_to_dict(row):
         'updated_at': row['updated_at']
     }
 
+def _analyze_samples(samples_data, existing_ids):
+    input_sample_ids = set()
+    result = {
+        'importable': [],
+        'duplicates_batch': [],
+        'duplicates_system': [],
+        'missing_fields': [],
+        'invalid': []
+    }
+    
+    for idx, item in enumerate(samples_data):
+        sid = str(item.get('sample_id', '')).strip()
+        sample_type = str(item.get('sample_type', '')).strip()
+        
+        if not sid:
+            result['missing_fields'].append({
+                'index': idx,
+                'item': item,
+                'reason': 'sample_id 不能为空'
+            })
+            continue
+        
+        if sid in input_sample_ids:
+            result['duplicates_batch'].append({
+                'index': idx,
+                'sample_id': sid,
+                'sample_type': sample_type,
+                'reason': '本批次内重复'
+            })
+            continue
+        input_sample_ids.add(sid)
+        
+        if sid in existing_ids:
+            result['duplicates_system'].append({
+                'index': idx,
+                'sample_id': sid,
+                'sample_type': sample_type,
+                'reason': '系统中已存在'
+            })
+            continue
+        
+        result['importable'].append({
+            'index': idx,
+            'sample_id': sid,
+            'sample_type': sample_type
+        })
+    
+    return result
+
 @samples_bp.route('', methods=['GET'])
 @login_required
 def list_samples():
@@ -105,6 +154,51 @@ def get_sample(sample_id):
     conn.close()
     return jsonify(sample)
 
+@samples_bp.route('/import/preview', methods=['POST'])
+@login_required
+def preview_import():
+    data = request.get_json()
+    samples_data = data.get('samples', [])
+    batch_no = data.get('batch_no', '').strip()
+    
+    if not samples_data:
+        return jsonify({'error': '导入数据不能为空'}), 400
+    
+    if not batch_no:
+        return jsonify({'error': '批次号不能为空'}), 400
+    
+    conn = get_db()
+    existing_ids = set()
+    for r in conn.execute('SELECT sample_id FROM samples').fetchall():
+        existing_ids.add(r['sample_id'])
+    conn.close()
+    
+    analysis = _analyze_samples(samples_data, existing_ids)
+    
+    total = len(samples_data)
+    importable_count = len(analysis['importable'])
+    duplicate_batch_count = len(analysis['duplicates_batch'])
+    duplicate_system_count = len(analysis['duplicates_system'])
+    missing_count = len(analysis['missing_fields'])
+    invalid_count = len(analysis['invalid'])
+    
+    return jsonify({
+        'success': True,
+        'batch_no': batch_no,
+        'total_count': total,
+        'importable_count': importable_count,
+        'duplicate_batch_count': duplicate_batch_count,
+        'duplicate_system_count': duplicate_system_count,
+        'duplicate_total_count': duplicate_batch_count + duplicate_system_count,
+        'missing_fields_count': missing_count,
+        'invalid_count': invalid_count,
+        'importable': analysis['importable'],
+        'duplicates_batch': analysis['duplicates_batch'],
+        'duplicates_system': analysis['duplicates_system'],
+        'missing_fields': analysis['missing_fields'],
+        'invalid': analysis['invalid']
+    })
+
 @samples_bp.route('/import', methods=['POST'])
 @login_required
 def import_samples():
@@ -124,29 +218,14 @@ def import_samples():
     for r in conn.execute('SELECT sample_id FROM samples').fetchall():
         existing_ids.add(r['sample_id'])
     
+    analysis = _analyze_samples(samples_data, existing_ids)
+    
     imported = []
-    duplicates = []
-    invalid = []
+    batch_items = []
     
-    input_sample_ids = set()
-    
-    for item in samples_data:
-        sid = str(item.get('sample_id', '')).strip()
-        sample_type = str(item.get('sample_type', '')).strip()
-        
-        if not sid:
-            invalid.append({'item': item, 'reason': 'sample_id 不能为空'})
-            continue
-        
-        if sid in input_sample_ids:
-            duplicates.append({'sample_id': sid, 'reason': '本批次内重复'})
-            continue
-        input_sample_ids.add(sid)
-        
-        if sid in existing_ids:
-            duplicates.append({'sample_id': sid, 'reason': '系统中已存在'})
-            continue
-        
+    for item in analysis['importable']:
+        sid = item['sample_id']
+        sample_type = item['sample_type']
         try:
             conn.execute(
                 'INSERT INTO samples (sample_id, batch_no, sample_type, current_status) VALUES (?, ?, ?, ?)',
@@ -160,21 +239,217 @@ def import_samples():
             )
             
             imported.append({'sample_id': sid, 'id': new_id})
+            batch_items.append({
+                'sample_id': sid,
+                'sample_type': sample_type,
+                'result': 'success',
+                'reason': '',
+                'sample_db_id': new_id
+            })
         except Exception as e:
-            invalid.append({'sample_id': sid, 'reason': str(e)})
+            batch_items.append({
+                'sample_id': sid,
+                'sample_type': sample_type,
+                'result': 'invalid',
+                'reason': str(e),
+                'sample_db_id': None
+            })
+    
+    for item in analysis['duplicates_batch']:
+        batch_items.append({
+            'sample_id': item['sample_id'],
+            'sample_type': item['sample_type'],
+            'result': 'duplicate_batch',
+            'reason': item['reason'],
+            'sample_db_id': None
+        })
+    
+    for item in analysis['duplicates_system']:
+        batch_items.append({
+            'sample_id': item['sample_id'],
+            'sample_type': item['sample_type'],
+            'result': 'duplicate_system',
+            'reason': item['reason'],
+            'sample_db_id': None
+        })
+    
+    for item in analysis['missing_fields']:
+        batch_items.append({
+            'sample_id': '',
+            'sample_type': '',
+            'result': 'missing_fields',
+            'reason': item['reason'],
+            'sample_db_id': None
+        })
+    
+    success_count = len(imported)
+    duplicate_batch_count = len(analysis['duplicates_batch'])
+    duplicate_system_count = len(analysis['duplicates_system'])
+    duplicate_total_count = duplicate_batch_count + duplicate_system_count
+    missing_count = len(analysis['missing_fields'])
+    invalid_count = len(analysis['invalid'])
+    total_count = len(samples_data)
+    
+    conn.execute(
+        '''INSERT INTO import_batches 
+           (batch_no, operator, total_count, success_count, duplicate_count, invalid_count, status) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        (batch_no, current_user.username, total_count, success_count, 
+         duplicate_total_count, missing_count + invalid_count, 'completed')
+    )
+    batch_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+    
+    for bi in batch_items:
+        conn.execute(
+            '''INSERT INTO import_batch_items 
+               (batch_id, sample_id, sample_type, result, reason, sample_db_id) 
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (batch_id, bi['sample_id'], bi['sample_type'], 
+             bi['result'], bi['reason'], bi['sample_db_id'])
+        )
     
     conn.commit()
     conn.close()
     
     return jsonify({
         'success': True,
+        'batch_id': batch_id,
         'batch_no': batch_no,
-        'imported_count': len(imported),
-        'duplicate_count': len(duplicates),
-        'invalid_count': len(invalid),
+        'total_count': total_count,
+        'imported_count': success_count,
+        'success_count': success_count,
+        'duplicate_batch_count': duplicate_batch_count,
+        'duplicate_system_count': duplicate_system_count,
+        'duplicate_count': duplicate_total_count,
+        'missing_fields_count': missing_count,
+        'invalid_count': invalid_count,
         'imported': imported,
-        'duplicates': duplicates,
-        'invalid': invalid
+        'duplicates_batch': analysis['duplicates_batch'],
+        'duplicates_system': analysis['duplicates_system'],
+        'missing_fields': analysis['missing_fields'],
+        'invalid': analysis['invalid']
+    })
+
+@samples_bp.route('/import/batches', methods=['GET'])
+@login_required
+def list_import_batches():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    batch_no = request.args.get('batch_no', '')
+    operator = request.args.get('operator', '')
+    
+    conn = get_db()
+    query = 'SELECT * FROM import_batches WHERE 1=1'
+    params = []
+    
+    if not current_user.is_admin():
+        query += ' AND operator = ?'
+        params.append(current_user.username)
+    elif operator:
+        query += ' AND operator = ?'
+        params.append(operator)
+    
+    if batch_no:
+        query += ' AND batch_no LIKE ?'
+        params.append(f'%{batch_no}%')
+    
+    count_query = query.replace('SELECT *', 'SELECT COUNT(*)')
+    total = conn.execute(count_query, params).fetchone()[0]
+    
+    query += ' ORDER BY id DESC LIMIT ? OFFSET ?'
+    params.extend([per_page, (page - 1) * per_page])
+    
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    
+    items = []
+    for r in rows:
+        items.append({
+            'id': r['id'],
+            'batch_no': r['batch_no'],
+            'operator': r['operator'],
+            'total_count': r['total_count'],
+            'success_count': r['success_count'],
+            'duplicate_count': r['duplicate_count'],
+            'invalid_count': r['invalid_count'],
+            'status': r['status'],
+            'created_at': r['created_at']
+        })
+    
+    return jsonify({
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'items': items
+    })
+
+@samples_bp.route('/import/batches/<int:batch_id>', methods=['GET'])
+@login_required
+def get_import_batch(batch_id):
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    result_filter = request.args.get('result', '')
+    
+    conn = get_db()
+    batch_row = conn.execute(
+        'SELECT * FROM import_batches WHERE id = ?', (batch_id,)
+    ).fetchone()
+    
+    if not batch_row:
+        conn.close()
+        return jsonify({'error': '批次记录不存在'}), 404
+    
+    if not current_user.is_admin() and batch_row['operator'] != current_user.username:
+        conn.close()
+        return jsonify({'error': '无权查看此批次记录'}), 403
+    
+    batch = {
+        'id': batch_row['id'],
+        'batch_no': batch_row['batch_no'],
+        'operator': batch_row['operator'],
+        'total_count': batch_row['total_count'],
+        'success_count': batch_row['success_count'],
+        'duplicate_count': batch_row['duplicate_count'],
+        'invalid_count': batch_row['invalid_count'],
+        'status': batch_row['status'],
+        'created_at': batch_row['created_at']
+    }
+    
+    items_query = 'SELECT * FROM import_batch_items WHERE batch_id = ?'
+    items_params = [batch_id]
+    
+    if result_filter:
+        items_query += ' AND result = ?'
+        items_params.append(result_filter)
+    
+    count_query = items_query.replace('SELECT *', 'SELECT COUNT(*)')
+    items_total = conn.execute(count_query, items_params).fetchone()[0]
+    
+    items_query += ' ORDER BY id ASC LIMIT ? OFFSET ?'
+    items_params.extend([per_page, (page - 1) * per_page])
+    
+    item_rows = conn.execute(items_query, items_params).fetchall()
+    
+    items = []
+    for r in item_rows:
+        items.append({
+            'id': r['id'],
+            'sample_id': r['sample_id'],
+            'sample_type': r['sample_type'],
+            'result': r['result'],
+            'reason': r['reason'],
+            'sample_db_id': r['sample_db_id'],
+            'created_at': r['created_at']
+        })
+    
+    conn.close()
+    
+    return jsonify({
+        'batch': batch,
+        'items_total': items_total,
+        'page': page,
+        'per_page': per_page,
+        'items': items
     })
 
 def _update_status(conn, sample_id, new_status, operator, remark=None, temperature=None):
